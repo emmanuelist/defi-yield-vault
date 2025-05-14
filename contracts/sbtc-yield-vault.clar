@@ -214,6 +214,44 @@
   )
 )
 
+(define-public (emergency-withdraw)
+  (begin
+    (asserts! (var-get emergency-mode) (err ERR_UNAUTHORIZED))
+    (let ((user-deposit (get-user-deposit tx-sender)))
+      (asserts! (> user-deposit u0) (err ERR_INSUFFICIENT_BALANCE))
+      ;; Clear user's deposit first
+      (map-set user-deposits tx-sender u0)
+      ;; Then transfer tokens
+      (match (as-contract (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+        transfer user-deposit tx-sender tx-sender none
+      ))
+        success (ok user-deposit)
+        error (begin
+          ;; Restore state on failure
+          (map-set user-deposits tx-sender user-deposit)
+          (err ERR_WITHDRAW_FAILED)
+        )
+      )
+    )
+  )
+)
+
+(define-public (schedule-yield-rate-change (new-rate uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    ;; Validate yield rate (same check as in set-yield-rate)
+    (asserts! (and (>= new-rate u0) (<= new-rate u1000))
+      (err ERR_INVALID_YIELD_RATE)
+    )
+    (map-set pending-admin-actions {
+      action: "set-yield-rate",
+      param: new-rate,
+    } { scheduled-at: stacks-block-height }
+    )
+    (ok true)
+  )
+)
+
 ;; Admin functions
 
 ;; Update the yield rate (admin only)
