@@ -17,6 +17,12 @@
 (define-constant ERR_UNAUTHORIZED u103)
 (define-constant ERR_DEPOSIT_FAILED u104)
 (define-constant ERR_WITHDRAW_FAILED u105)
+(define-constant ERR_DEPOSIT_LIMIT_REACHED u106)
+(define-constant ERR_INVALID_YIELD_RATE u107)
+(define-constant ERR_INVALID_TOKEN_CONTRACT u108)
+(define-constant ERR_INVALID_DEPOSIT_LIMIT u109)
+(define-constant MIN_DEPOSIT_LIMIT u1000000) ;; 0.01 sBTC assuming 8 decimals
+(define-constant MAX_DEPOSIT_LIMIT u100000000000) ;; 1,000 sBTC assuming 8 decimals
 
 ;; Data variables
 (define-data-var yield-rate uint u50) ;; 0.5% represented as 50 (basis points)
@@ -25,6 +31,11 @@
 (define-data-var vault-admin principal tx-sender) ;; Contract administrator who can update yield rates
 (define-data-var global-accumulator uint u0)
 (define-data-var token-contract-address principal 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token)
+(define-data-var emergency-mode bool false)
+(define-data-var admin-actions-timelock uint u144) ;; 1 day delay
+(define-data-var max-deposit-limit uint u1000000000) ;; Set a reasonable limit
+(define-data-var next-event-id uint u0)
+
 
 ;; Data maps
 (define-map user-deposits
@@ -43,6 +54,15 @@
   principal
   uint
 )
+
+(define-map pending-admin-actions
+  {
+    action: (string-ascii 20),
+    param: uint,
+  }
+  { scheduled-at: uint }
+)
+
 
 ;; Read-only functions
 
@@ -183,6 +203,14 @@
         (err ERR_WITHDRAW_FAILED)
       )
     )
+  )
+)
+
+(define-public (enable-emergency-mode)
+  (begin
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    (var-set emergency-mode true)
+    (ok true)
   )
 )
 
