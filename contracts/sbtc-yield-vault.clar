@@ -217,3 +217,14 @@
     error (err ERR_DEPOSIT_FAILED)
   )
 )
+
+;; Update the accumulator periodically
+(define-public (update-global-accumulator)
+  (let ((blocks-since-last (- stacks-block-height (var-get last-yield-distribution))))
+    (var-set global-accumulator
+      (+ (var-get global-accumulator) (* blocks-since-last (var-get yield-rate)))
+    )
+    (var-set last-yield-distribution stacks-block-height)
+    (ok true)
+  )
+)
