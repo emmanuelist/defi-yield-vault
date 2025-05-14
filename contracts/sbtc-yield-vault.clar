@@ -252,6 +252,37 @@
   )
 )
 
+(define-public (execute-yield-rate-change (new-rate uint))
+  (let ((scheduled-action (default-to { scheduled-at: u0 }
+      (map-get? pending-admin-actions {
+        action: "set-yield-rate",
+        param: new-rate,
+      })
+    )))
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    ;; Validate yield rate again, in case requirements changed between scheduling and execution
+    (asserts! (and (>= new-rate u0) (<= new-rate u1000))
+      (err ERR_INVALID_YIELD_RATE)
+    )
+    (asserts!
+      (>= stacks-block-height
+        (+ (get scheduled-at scheduled-action) (var-get admin-actions-timelock))
+      )
+      (err ERR_UNAUTHORIZED)
+    )
+    (var-set yield-rate new-rate)
+    (ok true)
+  )
+)
+
+(define-public (update-token-contract (new-address principal))
+  (begin
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    (var-set token-contract-address new-address)
+    (ok true)
+  )
+)
+
 ;; Admin functions
 
 ;; Update the yield rate (admin only)
