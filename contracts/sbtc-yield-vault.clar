@@ -101,3 +101,87 @@
     )
   )
 )
+
+;; Public functions
+
+;; Deposit sBTC into the vault
+(define-public (deposit (amount uint))
+  (let ((current-deposit (get-user-deposit tx-sender)))
+    ;; Transfer sBTC first
+    ;; Add safety check for deposit amount
+    (asserts! (< (+ current-deposit amount) u1000000000000000000)
+      (err ERR_UNAUTHORIZED)
+    )
+    (asserts! (< (+ current-deposit amount) (var-get max-deposit-limit))
+      (err ERR_DEPOSIT_LIMIT_REACHED)
+    )
+    (match (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+      transfer amount tx-sender (as-contract tx-sender) none
+    )
+      success (let ((pending-rewards (calculate-pending-rewards tx-sender)))
+        ;; Update rewards and deposit state
+        (map-set user-rewards tx-sender
+          (+ (get-user-rewards tx-sender) pending-rewards)
+        )
+        (map-set user-deposits tx-sender (+ current-deposit amount))
+        (map-set last-deposit-block tx-sender stacks-block-height)
+        (ok amount)
+      )
+      error (err ERR_DEPOSIT_FAILED)
+    )
+  )
+)
+
+;; Withdraw sBTC from the vault
+(define-public (withdraw (amount uint))
+  (let (
+      (current-deposit (get-user-deposit tx-sender))
+      (pending-rewards (calculate-pending-rewards tx-sender))
+    )
+    (asserts! (<= amount current-deposit) (err ERR_INSUFFICIENT_BALANCE))
+    ;; Update state first (checks-effects-interactions pattern)
+    (map-set user-deposits tx-sender (- current-deposit amount))
+    (map-set user-rewards tx-sender
+      (+ (get-user-rewards tx-sender) pending-rewards)
+    )
+    (map-set last-deposit-block tx-sender stacks-block-height)
+    ;; Then perform transfer
+    (match (as-contract (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+      transfer amount tx-sender tx-sender none
+    ))
+      success (ok amount)
+      error (begin
+        ;; Revert state on failure
+        (map-set user-deposits tx-sender current-deposit)
+        (map-set user-rewards tx-sender
+          (- (get-user-rewards tx-sender) pending-rewards)
+        )
+        (err ERR_WITHDRAW_FAILED)
+      )
+    )
+  )
+)
+
+;; Claim accumulated rewards
+(define-public (claim-rewards)
+  (let ((total-rewards (+ (get-user-rewards tx-sender) (calculate-pending-rewards tx-sender))))
+    (asserts! (> total-rewards u0) (err ERR_INSUFFICIENT_BALANCE))
+    (asserts!
+      (>= (unwrap! (get-vault-balance) (err ERR_INSUFFICIENT_VAULT_FUNDS))
+        total-rewards
+      )
+      (err ERR_INSUFFICIENT_VAULT_FUNDS)
+    )
+    (map-set user-rewards tx-sender u0)
+    (map-set last-deposit-block tx-sender stacks-block-height)
+    (match (as-contract (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+      transfer total-rewards tx-sender tx-sender none
+    ))
+      success (ok total-rewards)
+      error (begin
+        (map-set user-rewards tx-sender total-rewards)
+        (err ERR_WITHDRAW_FAILED)
+      )
+    )
+  )
+)
