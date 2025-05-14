@@ -185,3 +185,35 @@
     )
   )
 )
+
+;; Admin functions
+
+;; Update the yield rate (admin only)
+(define-public (set-yield-rate (new-rate uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    (asserts! (and (>= new-rate u0) (<= new-rate u1000)) (err ERR_UNAUTHORIZED))
+    (var-set yield-rate new-rate)
+    (ok true)
+  )
+)
+
+;; Set a new admin (current admin only)
+(define-public (set-admin (new-admin principal))
+  (begin
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    (asserts! (is-standard new-admin) (err ERR_UNAUTHORIZED))
+    (var-set vault-admin new-admin)
+    (ok true)
+  )
+)
+
+;; Fund the contract with sBTC (for paying out rewards)
+(define-public (fund-vault (amount uint))
+  (match (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token transfer
+    amount tx-sender (as-contract tx-sender) none
+  )
+    success (ok amount)
+    error (err ERR_DEPOSIT_FAILED)
+  )
+)
