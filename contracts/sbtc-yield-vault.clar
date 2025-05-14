@@ -17,6 +17,12 @@
 (define-constant ERR_UNAUTHORIZED u103)
 (define-constant ERR_DEPOSIT_FAILED u104)
 (define-constant ERR_WITHDRAW_FAILED u105)
+(define-constant ERR_DEPOSIT_LIMIT_REACHED u106)
+(define-constant ERR_INVALID_YIELD_RATE u107)
+(define-constant ERR_INVALID_TOKEN_CONTRACT u108)
+(define-constant ERR_INVALID_DEPOSIT_LIMIT u109)
+(define-constant MIN_DEPOSIT_LIMIT u1000000) ;; 0.01 sBTC assuming 8 decimals
+(define-constant MAX_DEPOSIT_LIMIT u100000000000) ;; 1,000 sBTC assuming 8 decimals
 
 ;; Data variables
 (define-data-var yield-rate uint u50) ;; 0.5% represented as 50 (basis points)
@@ -25,6 +31,11 @@
 (define-data-var vault-admin principal tx-sender) ;; Contract administrator who can update yield rates
 (define-data-var global-accumulator uint u0)
 (define-data-var token-contract-address principal 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token)
+(define-data-var emergency-mode bool false)
+(define-data-var admin-actions-timelock uint u144) ;; 1 day delay
+(define-data-var max-deposit-limit uint u1000000000) ;; Set a reasonable limit
+(define-data-var next-event-id uint u0)
+
 
 ;; Data maps
 (define-map user-deposits
@@ -43,6 +54,15 @@
   principal
   uint
 )
+
+(define-map pending-admin-actions
+  {
+    action: (string-ascii 20),
+    param: uint,
+  }
+  { scheduled-at: uint }
+)
+
 
 ;; Read-only functions
 
@@ -183,6 +203,128 @@
         (err ERR_WITHDRAW_FAILED)
       )
     )
+  )
+)
+
+(define-public (enable-emergency-mode)
+  (begin
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    (var-set emergency-mode true)
+    (ok true)
+  )
+)
+
+(define-public (emergency-withdraw)
+  (begin
+    (asserts! (var-get emergency-mode) (err ERR_UNAUTHORIZED))
+    (let ((user-deposit (get-user-deposit tx-sender)))
+      (asserts! (> user-deposit u0) (err ERR_INSUFFICIENT_BALANCE))
+      ;; Clear user's deposit first
+      (map-set user-deposits tx-sender u0)
+      ;; Then transfer tokens
+      (match (as-contract (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+        transfer user-deposit tx-sender tx-sender none
+      ))
+        success (ok user-deposit)
+        error (begin
+          ;; Restore state on failure
+          (map-set user-deposits tx-sender user-deposit)
+          (err ERR_WITHDRAW_FAILED)
+        )
+      )
+    )
+  )
+)
+
+(define-public (schedule-yield-rate-change (new-rate uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    ;; Validate yield rate (same check as in set-yield-rate)
+    (asserts! (and (>= new-rate u0) (<= new-rate u1000))
+      (err ERR_INVALID_YIELD_RATE)
+    )
+    (map-set pending-admin-actions {
+      action: "set-yield-rate",
+      param: new-rate,
+    } { scheduled-at: stacks-block-height }
+    )
+    (ok true)
+  )
+)
+
+(define-public (execute-yield-rate-change (new-rate uint))
+  (let ((scheduled-action (default-to { scheduled-at: u0 }
+      (map-get? pending-admin-actions {
+        action: "set-yield-rate",
+        param: new-rate,
+      })
+    )))
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    ;; Validate yield rate again, in case requirements changed between scheduling and execution
+    (asserts! (and (>= new-rate u0) (<= new-rate u1000))
+      (err ERR_INVALID_YIELD_RATE)
+    )
+    (asserts!
+      (>= stacks-block-height
+        (+ (get scheduled-at scheduled-action) (var-get admin-actions-timelock))
+      )
+      (err ERR_UNAUTHORIZED)
+    )
+    (var-set yield-rate new-rate)
+    (ok true)
+  )
+)
+
+(define-public (update-token-contract (new-address principal))
+  (begin
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    (var-set token-contract-address new-address)
+    (ok true)
+  )
+)
+
+(define-public (set-max-deposit-limit (new-limit uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    ;; Validate that the new limit is within reasonable bounds
+    (asserts!
+      (and (>= new-limit MIN_DEPOSIT_LIMIT) (<= new-limit MAX_DEPOSIT_LIMIT))
+      (err ERR_INVALID_DEPOSIT_LIMIT)
+    )
+    (var-set max-deposit-limit new-limit)
+    (ok true)
+  )
+)
+
+(define-public (log-deposit
+    (user principal)
+    (amount uint)
+  )
+  (begin
+    (print {
+      event: "deposit",
+      user: user,
+      amount: amount,
+      id: (var-get next-event-id),
+    })
+    (var-set next-event-id (+ (var-get next-event-id) u1))
+    (ok true)
+  )
+)
+
+(define-public (log-withdrawal
+    (user principal)
+    (amount uint)
+  )
+  (begin
+    (print {
+      event: "withdrawal",
+      user: user,
+      amount: amount,
+      id: (var-get next-event-id),
+    })
+    (var-set next-event-id (+ (var-get next-event-id) u1))
+    (ok true)
   )
 )
 
