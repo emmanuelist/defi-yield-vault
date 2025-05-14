@@ -283,6 +283,51 @@
   )
 )
 
+(define-public (set-max-deposit-limit (new-limit uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get vault-admin)) (err ERR_UNAUTHORIZED))
+    ;; Validate that the new limit is within reasonable bounds
+    (asserts!
+      (and (>= new-limit MIN_DEPOSIT_LIMIT) (<= new-limit MAX_DEPOSIT_LIMIT))
+      (err ERR_INVALID_DEPOSIT_LIMIT)
+    )
+    (var-set max-deposit-limit new-limit)
+    (ok true)
+  )
+)
+
+(define-public (log-deposit
+    (user principal)
+    (amount uint)
+  )
+  (begin
+    (print {
+      event: "deposit",
+      user: user,
+      amount: amount,
+      id: (var-get next-event-id),
+    })
+    (var-set next-event-id (+ (var-get next-event-id) u1))
+    (ok true)
+  )
+)
+
+(define-public (log-withdrawal
+    (user principal)
+    (amount uint)
+  )
+  (begin
+    (print {
+      event: "withdrawal",
+      user: user,
+      amount: amount,
+      id: (var-get next-event-id),
+    })
+    (var-set next-event-id (+ (var-get next-event-id) u1))
+    (ok true)
+  )
+)
+
 ;; Admin functions
 
 ;; Update the yield rate (admin only)
