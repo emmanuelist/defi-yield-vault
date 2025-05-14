@@ -55,3 +55,49 @@
 (define-read-only (get-user-rewards (user principal))
   (default-to u0 (map-get? user-rewards user))
 )
+
+;; Get the current yield rate (in basis points)
+(define-read-only (get-yield-rate)
+  (var-get yield-rate)
+)
+
+(define-read-only (get-vault-balance)
+  (contract-call? 'ST1F7QA2MDF17S807EPA36TSS8AMEFY4KA9TVGWXT.sbtc-token
+    get-balance-available (as-contract tx-sender)
+  )
+)
+
+;; Calculate pending rewards for a user
+(define-read-only (calculate-pending-rewards (user principal))
+  (let (
+      (user-deposit (get-user-deposit user))
+      (last-deposit (default-to u0 (map-get? last-deposit-block user)))
+      (current-block stacks-block-height)
+      (blocks-elapsed (if (> current-block last-deposit)
+        (- current-block last-deposit)
+        u0
+      ))
+    )
+    (if (or (is-eq user-deposit u0) (is-eq blocks-elapsed u0))
+      u0
+      ;; Calculate rewards in parts to avoid overflow
+      (let (
+          ;; Prevent division by zero and cap blocks elapsed to avoid overflow
+          (yield-period-value (if (is-eq (var-get yield-period) u0)
+            u1
+            (var-get yield-period)
+          ))
+          (blocks-elapsed-capped (if (> blocks-elapsed u10000)
+            u10000
+            blocks-elapsed
+          ))
+          ;; Calculate rate with increased precision to avoid underflow
+          (rate-factor (/ (* (var-get yield-rate) u100000) (* u100 yield-period-value)))
+          ;; Apply rate with precision adjustment
+          (rewards-raw (/ (* user-deposit rate-factor blocks-elapsed-capped) u100000))
+        )
+        rewards-raw
+      )
+    )
+  )
+)
